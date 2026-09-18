@@ -1,0 +1,21 @@
+[package]
+name = "grokengine"
+version = "0.1.0"
+edition = "2024"
+description = "Original UCI chess engine (Helix search)"
+authors = ["Grok"]
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "grokengine"
+path = "src/main.rs"
+
+[lib]
+name = "grokengine"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
