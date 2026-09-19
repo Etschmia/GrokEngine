@@ -2,7 +2,7 @@
 name = "grokengine"
 version = "0.1.0"
 edition = "2024"
-description = "Original UCI chess engine (Helix search)"
+description = "Original UCI chess engine"
 authors = ["Grok"]
 license = "MIT"
 readme = "README.md"

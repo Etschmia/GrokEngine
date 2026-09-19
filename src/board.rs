@@ -195,6 +195,13 @@ pub struct Undo {
     halfmove: u16,
     fullmove: u16,
     king: [u8; 2],
+    hash: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct NullUndo {
+    ep: Option<u8>,
+    hash: u64,
 }
 
 #[derive(Clone)]
@@ -206,6 +213,7 @@ pub struct Position {
     pub halfmove: u16,
     pub fullmove: u16,
     pub king: [u8; 2],
+    pub hash: u64,
 }
 
 impl Position {
@@ -218,6 +226,7 @@ impl Position {
             halfmove: 0,
             fullmove: 1,
             king: [0, 0],
+            hash: 0,
         }
     }
 
@@ -316,6 +325,7 @@ impl Position {
         };
         pos.halfmove = half.parse().unwrap_or(0);
         pos.fullmove = full.parse().unwrap_or(1);
+        pos.hash = crate::zobrist::hash_pos(&pos);
         Ok(pos)
     }
 
@@ -457,8 +467,7 @@ impl Position {
         let piece = self.squares[from];
         let pt = type_of(piece);
         let us = self.side;
-        let mut captured = self.squares[to];
-        let mut cap_sq = m.to;
+        let them = us.flip();
 
         let undo = Undo {
             captured: EMPTY,
@@ -468,10 +477,14 @@ impl Position {
             halfmove: self.halfmove,
             fullmove: self.fullmove,
             king: self.king,
+            hash: self.hash,
         };
 
+        self.hash ^= crate::zobrist::piece_key(us, pt, m.from);
         self.squares[from] = EMPTY;
-        self.squares[to] = piece;
+
+        let mut captured = self.squares[to];
+        let mut cap_sq = m.to;
 
         if m.is_ep() {
             let pawn_sq = if us == Color::White {
@@ -482,23 +495,30 @@ impl Position {
             captured = self.squares[pawn_sq as usize];
             cap_sq = pawn_sq;
             self.squares[pawn_sq as usize] = EMPTY;
+            self.hash ^= crate::zobrist::piece_key(them, PAWN, pawn_sq);
+        } else if captured != EMPTY {
+            self.hash ^= crate::zobrist::piece_key(color_of(captured), type_of(captured), m.to);
         }
 
-        if m.promo != 0 {
-            self.squares[to] = make_piece(us, m.promo);
-        }
+        let new_pt = if m.promo != 0 { m.promo } else { pt };
+        self.squares[to] = make_piece(us, new_pt);
+        self.hash ^= crate::zobrist::piece_key(us, new_pt, m.to);
 
         if m.is_castle() {
             if m.to == m.from + 2 {
-                let rfrom = (m.from + 3) as usize;
-                let rto = (m.from + 1) as usize;
-                self.squares[rto] = self.squares[rfrom];
-                self.squares[rfrom] = EMPTY;
+                let rfrom = m.from + 3;
+                let rto = m.from + 1;
+                self.squares[rto as usize] = self.squares[rfrom as usize];
+                self.squares[rfrom as usize] = EMPTY;
+                self.hash ^= crate::zobrist::piece_key(us, ROOK, rfrom);
+                self.hash ^= crate::zobrist::piece_key(us, ROOK, rto);
             } else {
-                let rfrom = (m.from - 4) as usize;
-                let rto = (m.from - 1) as usize;
-                self.squares[rto] = self.squares[rfrom];
-                self.squares[rfrom] = EMPTY;
+                let rfrom = m.from - 4;
+                let rto = m.from - 1;
+                self.squares[rto as usize] = self.squares[rfrom as usize];
+                self.squares[rfrom as usize] = EMPTY;
+                self.hash ^= crate::zobrist::piece_key(us, ROOK, rfrom);
+                self.hash ^= crate::zobrist::piece_key(us, ROOK, rto);
             }
         }
 
@@ -506,14 +526,21 @@ impl Position {
             self.king[us.idx()] = m.to;
         }
 
+        self.hash ^= crate::zobrist::castle_key(self.castling);
         let mut cr = self.castling;
         cr &= castle_mask(m.from);
         cr &= castle_mask(m.to);
         self.castling = cr;
+        self.hash ^= crate::zobrist::castle_key(self.castling);
 
+        if let Some(ep) = self.ep {
+            self.hash ^= crate::zobrist::ep_key(file_of(ep));
+        }
         self.ep = None;
         if pt == PAWN && rank_of(m.from).abs_diff(rank_of(m.to)) == 2 {
-            self.ep = Some(sq_of(file_of(m.from), (rank_of(m.from) + rank_of(m.to)) / 2));
+            let ep = sq_of(file_of(m.from), (rank_of(m.from) + rank_of(m.to)) / 2);
+            self.ep = Some(ep);
+            self.hash ^= crate::zobrist::ep_key(file_of(ep));
         }
 
         if pt == PAWN || captured != EMPTY {
@@ -526,6 +553,7 @@ impl Position {
             self.fullmove = self.fullmove.saturating_add(1);
         }
         self.side = us.flip();
+        self.hash ^= crate::zobrist::side_key();
 
         Undo {
             captured,
@@ -541,6 +569,7 @@ impl Position {
         self.halfmove = u.halfmove;
         self.fullmove = u.fullmove;
         self.king = u.king;
+        self.hash = u.hash;
 
         let us = self.side;
         let from = m.from as usize;
@@ -576,20 +605,82 @@ impl Position {
         }
     }
 
-    pub fn legal_moves(&self) -> Vec<Move> {
-        let mut moves = Vec::with_capacity(64);
-        self.gen_pseudo(&mut moves);
-        let mut legal = Vec::with_capacity(moves.len());
-        let mut pos = self.clone();
-        for m in moves {
-            let u = pos.make(m);
-            let king = pos.king[pos.side.flip().idx()];
-            if !pos.attacked_by(king, pos.side) {
-                legal.push(m);
-            }
-            pos.unmake(m, u);
+    pub fn make_null(&mut self) -> NullUndo {
+        let undo = NullUndo {
+            ep: self.ep,
+            hash: self.hash,
+        };
+        if let Some(ep) = self.ep {
+            self.hash ^= crate::zobrist::ep_key(file_of(ep));
         }
-        legal
+        self.ep = None;
+        self.side = self.side.flip();
+        self.hash ^= crate::zobrist::side_key();
+        undo
+    }
+
+    pub fn unmake_null(&mut self, u: NullUndo) {
+        self.side = self.side.flip();
+        self.ep = u.ep;
+        self.hash = u.hash;
+    }
+
+    pub fn legal_moves(&self) -> Vec<Move> {
+        let mut pos = self.clone();
+        let mut moves = Vec::with_capacity(64);
+        pos.gen_legal_into(&mut moves);
+        moves
+    }
+
+    /// Generate legal moves into `moves` (cleared first). Uses make/unmake on self.
+    pub fn gen_legal_into(&mut self, moves: &mut Vec<Move>) {
+        moves.clear();
+        self.gen_pseudo(moves);
+        let mut i = 0;
+        while i < moves.len() {
+            let m = moves[i];
+            let u = self.make(m);
+            let king = self.king[self.side.flip().idx()];
+            let legal = !self.attacked_by(king, self.side);
+            self.unmake(m, u);
+            if legal {
+                i += 1;
+            } else {
+                moves.swap_remove(i);
+            }
+        }
+    }
+
+    /// Legal captures and promotions, for quiescence search.
+    pub fn gen_captures_into(&mut self, moves: &mut Vec<Move>) {
+        moves.clear();
+        self.gen_captures_pseudo(moves);
+        let mut i = 0;
+        while i < moves.len() {
+            let m = moves[i];
+            let u = self.make(m);
+            let king = self.king[self.side.flip().idx()];
+            let legal = !self.attacked_by(king, self.side);
+            self.unmake(m, u);
+            if legal {
+                i += 1;
+            } else {
+                moves.swap_remove(i);
+            }
+        }
+    }
+
+    pub fn has_non_pawn_material(&self, color: Color) -> bool {
+        for sq in 0..64 {
+            let p = self.squares[sq];
+            if p != EMPTY && color_of(p) == color {
+                let t = type_of(p);
+                if t != PAWN && t != KING {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn move_from_lan(&self, lan: &str) -> Option<Move> {
@@ -617,6 +708,28 @@ impl Position {
                     self.gen_leaper(sq, &KING_D, moves);
                     self.gen_castling(sq, moves);
                 }
+                _ => {}
+            }
+        }
+    }
+
+    fn gen_captures_pseudo(&self, moves: &mut Vec<Move>) {
+        let us = self.side;
+        for sq in 0..64u8 {
+            let p = self.squares[sq as usize];
+            if p == EMPTY || color_of(p) != us {
+                continue;
+            }
+            match type_of(p) {
+                PAWN => self.gen_pawn_noisy(sq, moves),
+                KNIGHT => self.gen_leaper_caps(sq, &KNIGHT_D, moves),
+                BISHOP => self.gen_slider_caps(sq, &BISHOP_D, moves),
+                ROOK => self.gen_slider_caps(sq, &ROOK_D, moves),
+                QUEEN => {
+                    self.gen_slider_caps(sq, &BISHOP_D, moves);
+                    self.gen_slider_caps(sq, &ROOK_D, moves);
+                }
+                KING => self.gen_leaper_caps(sq, &KING_D, moves),
                 _ => {}
             }
         }
@@ -663,12 +776,53 @@ impl Position {
         }
     }
 
+    fn gen_pawn_noisy(&self, sq: u8, moves: &mut Vec<Move>) {
+        let us = self.side;
+        let dir: i8 = if us == Color::White { 1 } else { -1 };
+        let promo_rank = if us == Color::White { 7 } else { 0 };
+
+        if let Some(to) = dest(sq, 0, dir) {
+            if self.squares[to as usize] == EMPTY && rank_of(to) == promo_rank {
+                push_promos(sq, to, moves);
+            }
+        }
+
+        for df in [-1i8, 1] {
+            if let Some(to) = dest(sq, df, dir) {
+                let target = self.squares[to as usize];
+                if target != EMPTY && color_of(target) != us {
+                    if rank_of(to) == promo_rank {
+                        push_promos(sq, to, moves);
+                    } else {
+                        moves.push(Move::new(sq, to));
+                    }
+                } else if target == EMPTY && self.ep == Some(to) {
+                    let mut m = Move::new(sq, to);
+                    m.flags = FLAG_EP;
+                    moves.push(m);
+                }
+            }
+        }
+    }
+
     fn gen_leaper(&self, sq: u8, deltas: &[(i8, i8)], moves: &mut Vec<Move>) {
         let us = self.side;
         for &(df, dr) in deltas {
             if let Some(to) = dest(sq, df, dr) {
                 let t = self.squares[to as usize];
                 if t == EMPTY || color_of(t) != us {
+                    moves.push(Move::new(sq, to));
+                }
+            }
+        }
+    }
+
+    fn gen_leaper_caps(&self, sq: u8, deltas: &[(i8, i8)], moves: &mut Vec<Move>) {
+        let us = self.side;
+        for &(df, dr) in deltas {
+            if let Some(to) = dest(sq, df, dr) {
+                let t = self.squares[to as usize];
+                if t != EMPTY && color_of(t) != us {
                     moves.push(Move::new(sq, to));
                 }
             }
@@ -692,6 +846,26 @@ impl Position {
                 }
                 f += df;
                 r += dr;
+            }
+        }
+    }
+
+    fn gen_slider_caps(&self, sq: u8, dirs: &[(i8, i8)], moves: &mut Vec<Move>) {
+        let us = self.side;
+        for &(df, dr) in dirs {
+            let mut f = df;
+            let mut r = dr;
+            while let Some(to) = dest(sq, f, r) {
+                let t = self.squares[to as usize];
+                if t == EMPTY {
+                    f += df;
+                    r += dr;
+                    continue;
+                }
+                if color_of(t) != us {
+                    moves.push(Move::new(sq, to));
+                }
+                break;
             }
         }
     }
@@ -897,6 +1071,26 @@ mod tests {
         let m = pos.move_from_lan("e1g1").unwrap();
         assert!(m.is_castle());
         assert_eq!(m.to_lan(), "e1g1");
+    }
+
+    #[test]
+    fn hash_updates_and_restores() {
+        let mut pos = Position::startpos();
+        let h0 = pos.hash;
+        assert_eq!(h0, crate::zobrist::hash_pos(&pos));
+        let m = pos.move_from_lan("e2e4").unwrap();
+        let u = pos.make(m);
+        assert_ne!(pos.hash, h0);
+        assert_eq!(pos.hash, crate::zobrist::hash_pos(&pos));
+        pos.unmake(m, u);
+        assert_eq!(pos.hash, h0);
+    }
+
+    #[test]
+    fn hash_includes_side_to_move() {
+        let w = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        let b = Position::from_fen("4k3/8/8/8/8/8/8/4K3 b - - 0 1").unwrap();
+        assert_ne!(w.hash, b.hash);
     }
 
     #[test]

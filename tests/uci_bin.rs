@@ -1,8 +1,8 @@
 //! Launch the real `grokengine` binary and speak UCI on its stdin/stdout.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn run_script(script: &str) -> String {
     let mut child = Command::new(env!("CARGO_BIN_EXE_grokengine"))
@@ -84,5 +84,120 @@ fn binary_uci_fen_clock() {
             .move_from_lan(mv)
             .is_some(),
         "bestmove '{mv}' is not legal in {fen}\n{out}"
+    );
+}
+
+#[test]
+fn binary_isready_during_search() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_grokengine"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("launch grokengine binary");
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    writeln!(stdin, "uci").unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        if line.starts_with("uciok") {
+            break;
+        }
+    }
+
+    writeln!(stdin, "position startpos").unwrap();
+    writeln!(stdin, "go movetime 2000").unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+
+    let t0 = Instant::now();
+    let mut ready_at = None;
+    let mut got_best = false;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
+        if line.starts_with("readyok") {
+            ready_at = Some(t0.elapsed());
+        }
+        if line.starts_with("bestmove ") {
+            got_best = true;
+            break;
+        }
+        if t0.elapsed() > Duration::from_secs(6) {
+            break;
+        }
+    }
+    let _ = writeln!(stdin, "quit");
+    drop(stdin);
+    let _ = child.wait();
+
+    let ready_at = ready_at.expect("isready was not answered");
+    assert!(
+        ready_at < Duration::from_millis(500),
+        "isready blocked until search finished: {ready_at:?}"
+    );
+    assert!(got_best, "search did not return a bestmove");
+}
+
+#[test]
+fn binary_stop_returns_quickly() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_grokengine"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("launch grokengine binary");
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    writeln!(stdin, "uci").unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        if line.starts_with("uciok") {
+            break;
+        }
+    }
+
+    writeln!(stdin, "position startpos").unwrap();
+    writeln!(stdin, "go movetime 8000").unwrap();
+    stdin.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    writeln!(stdin, "stop").unwrap();
+    stdin.flush().unwrap();
+
+    let t0 = Instant::now();
+    let mut got_best = false;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
+        if line.starts_with("bestmove ") {
+            got_best = true;
+            break;
+        }
+        if t0.elapsed() > Duration::from_secs(2) {
+            break;
+        }
+    }
+    let elapsed = t0.elapsed();
+    let _ = writeln!(stdin, "quit");
+    drop(stdin);
+    let _ = child.wait();
+    assert!(got_best, "stop did not produce bestmove");
+    assert!(
+        elapsed < Duration::from_millis(800),
+        "stop took too long: {elapsed:?}"
     );
 }
