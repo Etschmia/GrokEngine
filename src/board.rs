@@ -130,7 +130,7 @@ fn sq_of(file: u8, rank: u8) -> u8 {
 }
 
 #[inline]
-fn dest(sq: u8, dfile: i8, drank: i8) -> Option<u8> {
+pub(crate) fn dest(sq: u8, dfile: i8, drank: i8) -> Option<u8> {
     let f = file_of(sq) as i8 + dfile;
     let r = rank_of(sq) as i8 + drank;
     if (0..8).contains(&f) && (0..8).contains(&r) {
@@ -163,7 +163,7 @@ fn make_piece(color: Color, pt: u8) -> u8 {
     }
 }
 
-const KNIGHT_D: [(i8, i8); 8] = [
+pub(crate) const KNIGHT_D: [(i8, i8); 8] = [
     (1, 2),
     (1, -2),
     (-1, 2),
@@ -183,8 +183,8 @@ const KING_D: [(i8, i8); 8] = [
     (-1, 1),
     (-1, -1),
 ];
-const BISHOP_D: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
-const ROOK_D: [(i8, i8); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+pub(crate) const BISHOP_D: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
+pub(crate) const ROOK_D: [(i8, i8); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
 #[derive(Clone, Copy)]
 pub struct Undo {
