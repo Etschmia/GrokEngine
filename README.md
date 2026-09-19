@@ -7,7 +7,9 @@ nicht in diesem Repository).
 
 Was die Engine kann: legale Züge (Perft), iterative Alpha-Beta-Suche mit
 Ruhesuche, Transpositionstabelle, Wiedererkennung von Stellungen, eigene
-tapered Bewertung, UCI inklusive `Hash` und `Move Overhead`.
+tapered Bewertung (Material, PST, Bauernstruktur, Mobilität,
+Königssicherheit, Türme auf offenen Linien), UCI inklusive `Hash` und
+`Move Overhead`.
 
 Was sie nicht kann: Mehrkern-Suche, Eröffnungsbuch, Syzygy, Ponder.
 
@@ -62,25 +64,31 @@ cargo build --release
 ./target/release/grokengine bench
 ```
 
-Zuletzt: 881541 Knoten, 560 ms, ~1.57e6 nps, 8 Stellungen, Solltiefe 6.
+Zuletzt: 605167 Knoten, 507 ms, ~1.19e6 nps, 8 Stellungen, Solltiefe 6.
+(`cee7c62` zum Vergleich: 881541 Knoten, 560 ms, ~1.57e6 nps — die Eval
+ist teurer, Startpos `go movetime 1000` bleibt bei Tiefe 10.)
 
-Wettkampf 5+0 gegen sparkengine (Stand `01c3cb2`, sechs Partien): 2–4. Beide
-Siege durch einen Patzer des Gegners. Median-Suchtiefe damals 6 gegen 14–15.
-Das ist die Ausgangslage, kein aktueller Elo.
+Wettkampf 5+0 gegen sparkengine (Stand `01c3cb2`, sechs Partien): 2–4.
+Nach `cee7c62`, 20 Partien 5+0: 3–17. Median-Suchtiefe zuletzt 12 gegen 14.
+Das ist die Ausgangslage gegen den Gegner, kein aktueller Elo.
 
-Match neuer Stand gegen `01c3cb2`:
+Match `cee7c62` gegen `01c3cb2`, vier Partien 30+0: **4–0**. Details in
+`CHANGES.md`.
 
-```
-../engine-arena/engine_match.py \
-  ./target/release/grokengine ../engine-arena/grokengine-01c3cb2 -t 30 -o r1.pgn
-```
+Bewertungsterme (Mobilität, Königssicherheit, offene Turmlinien), 20 Partien
+1+0, Farbwechsel, eine Partie gleichzeitig:
 
-Vier Partien 30+0 (je zwei pro Farbe): **4–0 für den neuen Stand**.
-Median-Suchtiefe in den PGN: neu 8–9, alt 4–5. Das ist ein Indiz, kein Elo.
-PGN: `../engine-arena/grok_new_vs_old_r{1,2,3,4}.pgn`. Details in `CHANGES.md`.
+- gegen `grokengine-cee7c62`: **13W 2R 5L** (14,0/20). Grob +147 Elo,
+  95-%-Bereich etwa +8 bis +361. PGN: `../engine-arena/eval-terms-2026-09-19/`.
+- gegen `grokengine-altpst` (alte Tabellen, sonst gleicher Code):
+  **10W 5R 5L** (12,5/20). Grob +89 Elo, 95-%-Bereich etwa −40 bis +248
+  (schließt 0 ein). PGN: `../engine-arena/eval-vs-altpst-2026-09-19/`.
+
+Zwanzig Partien ohne Buch sind ein Indiz, kein kalibrierter Elo.
 
 ## Offen
 
-- Suchtiefe gegen eine stärkere Engine (14–15 im Blitz) ist nicht erreicht.
+- Kein neues Match gegen sparkengine mit den Bewertungstermen.
 - Keine Endspieltabellen, kein Buch, ein Thread.
-- Spielstärke ist nicht kalibriert; es gibt keine Elo-Angabe.
+- Spielstärke ist nicht kalibriert; die Elo-Zahlen oben gelten nur für
+  die genannten 20-Partien-Serien.

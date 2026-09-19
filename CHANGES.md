@@ -101,3 +101,76 @@ Overhead+50 ms.
   **4–0 für den neuen Stand.** Median-Suchtiefe in den PGN-Kommentaren: neu 8–9,
   alt 4–5. Vier Partien ohne Buch sind nur ein Indiz, kein Elo. Ohne Buch
   können Partien mit derselben Farbe ähnlich verlaufen.
+
+# Bewertungsterme (19.09.2026)
+
+Material und PST bleiben die selbst hergeleiteten Werte aus Defizit 2. Neu
+sind drei Terme, die `cee7c62` nicht hatte. Gewichte und Geometrie stehen
+im Kopf von `src/eval.rs`; nichts davon ist aus einer anderen Engine
+übernommen.
+
+**Idee.** Der Abstand zu sparkengine lag nach `cee7c62` nicht mehr in der
+Suchtiefe. Ein separates Experiment (`grokengine-altpst`, PeSTO-Material plus
+Simplified-Evaluation-Tabellen, sonst identischer Code) schlug `cee7c62` mit
+13–7 bei gleicher Tiefe. Die alten Zahlen sind keine Option. Die Lücke sollte
+sich mit eigenen Termen schließen: Mobilität, Königssicherheit, Türme auf
+offenen Linien.
+
+**Umsetzung.** Ein Paket, nicht drei isolierte Patches:
+
+- Mobilität: Springer, Läufer, Turm, Dame zählen erreichbare Felder
+  (leer oder Gegner). Kleine cp-Gewichte, Dame nur 1, damit sie die Eval
+  nicht dominiert.
+- Königssicherheit, nur Mittelspiel: Bauernschild auf den drei Linien vor
+  einem Königsflügel (a–c / f–h). Fehlender Bauer 14, um drei Reihen
+  vorgeschoben 6. Zusätzlich Tropismus: gegnerische Dame und Springer nach
+  Tschebyschew-Abstand zum König. Unrochierte Könige auf d/e bleiben beim
+  König-PST, sonst würde 1.e4 wie ein Loch aussehen.
+- Türme: halboffene Linie (kein eigener Bauer), offene Linie (keine Bauern),
+  kleiner Extra-Bonus für verdoppelte Türme auf derselben offenen Linie.
+
+**Messung 1.** 20 Partien 1+0 gegen das eingefrorene Binary
+`../engine-arena/grokengine-cee7c62`. Farbwechsel, eine Partie gleichzeitig,
+martuni-Regel. Binary der neuen Eval: `../engine-arena/grokengine-eval1`.
+PGNs: `../engine-arena/eval-terms-2026-09-19/`.
+
+| | |
+|---|---|
+| Ergebnis | **13W 2R 5L** (14,0/20, 70 %) |
+| grob Elo | **+147** für die neuen Terme |
+| grober 95-%-Bereich | etwa **+8 bis +361** |
+| Suchtiefe (Median der Partiemediane) | neu 10, `cee7c62` 10,5 |
+| Enden | 19× normal/Matt, 1× dreifache Wiederholung |
+
+Die Terme bleiben. Der 95-%-Bereich schließt 0 nicht ein, bei 20 Partien
+ohne Buch ist das trotzdem nur ein Indiz.
+
+**Messung 2.** Dieselbe neue Eval, 20 Partien 1+0 gegen
+`../engine-arena/grokengine-altpst` (alte Tabellen, neuer Rest).
+PGNs: `../engine-arena/eval-vs-altpst-2026-09-19/`.
+
+| | |
+|---|---|
+| Ergebnis | **10W 5R 5L** (12,5/20, 62,5 %) |
+| grob Elo | **+89** für die eigenen Terme gegen die alten Tabellen |
+| grober 95-%-Bereich | etwa **−40 bis +248** (schließt 0 ein) |
+| Suchtiefe (Median der Partiemediane) | neu 10, altpst 11 |
+| Enden | 17× normal/Matt, 3× dreifache Wiederholung |
+
+Ziel war, die alten Tabellen mit eigenen Mitteln einzuholen oder zu
+übertreffen. Der Punktestand geht in diese Richtung; der 95-%-Bereich
+lässt 0 zu. Kein Elo gegen sparkengine in diesem Auftrag.
+
+**Bench** (8 Stellungen, Solltiefe 6), Release, dieselbe Maschine:
+
+```
+# cee7c62: 881541 Knoten, 560 ms, ~1.57e6 nps
+# aktuell: 605167 Knoten, 507 ms, ~1.19e6 nps
+```
+
+Die Eval ist teurer (Strahlengänge). Startstellung `go movetime 1000`
+erreicht weiter Tiefe 10.
+
+Tests: `cargo test` grün, inklusive `rook_on_semi_open_file_beats_blocked_file`,
+`open_bishop_beats_blocked_bishop`, `pawn_shield_beats_exposed_wing_king`.
+Release-Build ohne Warnungen.
