@@ -65,6 +65,41 @@ fn binary_uci_startpos_movetime() {
 }
 
 #[test]
+fn binary_go_nodes_stops_near_limit() {
+    let script = "uci\nisready\nposition startpos\ngo nodes 20000\nquit\n";
+    let t0 = Instant::now();
+    let out = run_script(script);
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "go nodes hung: {elapsed:?}\n{out}"
+    );
+    let mv = bestmove_token(&out);
+    assert!(
+        STARTPOS_LEGAL.contains(&mv),
+        "illegal or missing bestmove '{mv}' in:\n{out}"
+    );
+    let nodes = out
+        .lines()
+        .filter(|l| l.starts_with("info "))
+        .rev()
+        .find_map(|l| {
+            let mut it = l.split_whitespace();
+            while let Some(t) = it.next() {
+                if t == "nodes" {
+                    return it.next().and_then(|n| n.parse::<u64>().ok());
+                }
+            }
+            None
+        })
+        .expect("missing nodes in info");
+    assert!(
+        nodes > 0 && nodes <= 20_000 + 512,
+        "go nodes 20000 searched {nodes}:\n{out}"
+    );
+}
+
+#[test]
 fn binary_uci_fen_clock() {
     let fen = "rnbqkb1r/pppp1ppp/5n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 4 3";
     let script = format!(

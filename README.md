@@ -7,9 +7,9 @@ nicht in diesem Repository).
 
 Was die Engine kann: legale Züge (Perft), iterative Alpha-Beta-Suche mit
 Ruhesuche, Transpositionstabelle, Wiedererkennung von Stellungen, eigene
-tapered Bewertung (Material, PST, Bauernstruktur, Mobilität,
-Königssicherheit, Türme auf offenen Linien), UCI inklusive `Hash` und
-`Move Overhead`.
+tapered Bewertung (Material, PST, Bauernstruktur, Könignähe zum Freibauern
+im Endspiel, Mobilität, Königssicherheit, Türme auf offenen Linien), UCI
+inklusive `Hash`, `Move Overhead` und `go nodes`.
 
 Was sie nicht kann: Mehrkern-Suche, Eröffnungsbuch, Syzygy, Ponder.
 
@@ -28,7 +28,7 @@ cargo build --release
 - `setoption name Move Overhead value <ms>` (Default 100; Alias `MoveOverhead`)
 - `ucinewgame`
 - `position startpos moves …` / `position fen <fen> moves …`
-- `go movetime <ms>` / `go wtime … btime … winc … binc …` / `go depth …`
+- `go movetime <ms>` / `go wtime … btime … winc … binc …` / `go depth …` / `go nodes …`
 - `stop`, `quit`
 - `bench` (auch als `./target/release/grokengine bench`)
 
@@ -43,7 +43,8 @@ cargo test
 Perft (Startstellung 1–4, Kiwipete, Position 3, Talkchess), Matt in 1,
 dreifache Wiederholung (Weiß hält mit Turm gegen Dame durch `h1g1` und Score 0),
 Gewinnseite vermeidet Wiederholung, Matt schlägt die 50-Züge-Regel,
-Binärtests für `isready` während `go` und für `stop`.
+Binärtests für `isready` während `go`, für `stop`, und dafür, dass
+`go nodes` die Suche an der angegebenen Knotenzahl beendet.
 
 ## Gemessen
 
@@ -64,13 +65,21 @@ cargo build --release
 ./target/release/grokengine bench
 ```
 
-Zuletzt: 605167 Knoten, 507 ms, ~1.19e6 nps, 8 Stellungen, Solltiefe 6.
-(`cee7c62` zum Vergleich: 881541 Knoten, 560 ms, ~1.57e6 nps — die Eval
-ist teurer, Startpos `go movetime 1000` bleibt bei Tiefe 10.)
+Zuletzt: 596513 Knoten, 537 ms, ~1.11e6 nps, 8 Stellungen, Solltiefe 6.
+(`a65bad9` / `grokengine-nodes` zum Vergleich: 605167 Knoten, ~1.15e6 nps
+— der Freibauern-Königsterm ändert Cutoffs, nicht die Knotenkosten.
+`cee7c62`: 881541 Knoten, ~1.57e6 nps.)
 
-Wettkampf 5+0 gegen sparkengine (Stand `01c3cb2`, sechs Partien): 2–4.
-Nach `cee7c62`, 20 Partien 5+0: 3–17. Median-Suchtiefe zuletzt 12 gegen 14.
-Das ist die Ausgangslage gegen den Gegner, kein aktueller Elo.
+Wettkampf 5+0 gegen sparkengine, ohne Buch, Schiedsrichter:
+
+- Stand `01c3cb2`, sechs Partien: 2–4.
+- `cee7c62`, 20 Partien: 3–17. Median-Suchtiefe 12 gegen 14.
+- `a65bad9`, 20 Partien (Serie 3): **8–12**. Median-Suchtiefe 12 gegen 15.
+  Score 40 %, grob −70 Elo, 95-%-Bereich etwa −230 bis +60 (schließt
+  Gleichstand ein). PGNs: `../engine-arena/match-2026-09-19-b/`.
+
+Zwanzig Partien aus der Grundstellung sind korrelierte Stichproben, kein
+kalibrierter Elo. Einordnung in `KANON.md`.
 
 Match `cee7c62` gegen `01c3cb2`, vier Partien 30+0: **4–0**. Details in
 `CHANGES.md`.
@@ -86,9 +95,21 @@ Bewertungsterme (Mobilität, Königssicherheit, offene Turmlinien), 20 Partien
 
 Zwanzig Partien ohne Buch sind ein Indiz, kein kalibrierter Elo.
 
+Buchserien, 80 Partien, 40 Stellungen je beide Farben, 200000 Knoten/Zug
+(`auswertung.py`):
+
+- Nullzug an gegen aus: **45 : 35** (+44 Elo, Bereich −23…+114, LOS 89,8 %,
+  Tiefe 9 gegen 8). Indiz, bleibt an. `../engine-arena/ablation-null-2026-09-20/`.
+- Könignähe zum Freibauern gegen denselben Stand ohne den Term: **44,5 : 35,5**
+  (+39 Elo, Bereich −27…+109, LOS 87,5 %, Tiefe beide 9). Indiz, bleibt.
+  `../engine-arena/passer-2026-09-20/`.
+- Schachzüge von LMR/Futility ausnehmen: **41,5 : 38,5** (+13 Elo, Bereich
+  −54…+81, Tiefe 8 gegen 9). Nicht übernommen.
+
+Alle drei Bereiche schließen 0 ein. Details in `KANON.md` und `CHANGES.md`.
+
 ## Offen
 
-- Kein neues Match gegen sparkengine mit den Bewertungstermen.
-- Keine Endspieltabellen, kein Buch, ein Thread.
-- Spielstärke ist nicht kalibriert; die Elo-Zahlen oben gelten nur für
-  die genannten 20-Partien-Serien.
+- Keine Endspieltabellen, kein Buch in der Engine, ein Thread.
+- Spielstärke ist nicht kalibriert. Was gemessen ist und was geerbt, steht
+  in `KANON.md`. Neue Serien mit `BOOK=openings.epd` und `-n`.

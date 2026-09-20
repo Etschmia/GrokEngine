@@ -20,7 +20,9 @@
 //! - King: middlegame wants b1/c1/g1 (castled); endgame wants the centre.
 //!
 //! Structure: doubled and isolated pawns are penalised; passed pawns are
-//! rewarded by rank. Bishop pair is a bonus for covering both colours.
+//! rewarded by rank. In the endgame a passer also wants our king near and
+//! the enemy king far (Chebyshev, scaled by rank). Bishop pair is a bonus
+//! for covering both colours.
 //!
 //! Mobility: knights, bishops, rooks and queens score a few centipawns per
 //! reachable square (empty or opponent). The weights are small so the piece-
@@ -289,6 +291,8 @@ pub fn evaluate(pos: &Position) -> i32 {
         pawn_n[0],
         &pawn_sq[1],
         pawn_n[1],
+        pos.king[0] as usize,
+        pos.king[1] as usize,
         true,
     );
     let (b_mg, b_eg) = pawn_terms(
@@ -297,6 +301,8 @@ pub fn evaluate(pos: &Position) -> i32 {
         pawn_n[1],
         &pawn_sq[0],
         pawn_n[0],
+        pos.king[1] as usize,
+        pos.king[0] as usize,
         false,
     );
     mg += w_mg - b_mg;
@@ -439,6 +445,8 @@ fn pawn_terms(
     n: usize,
     opp_sqs: &[u8; 8],
     opp_n: usize,
+    our_king: usize,
+    their_king: usize,
     white: bool,
 ) -> (i32, i32) {
     let mut mg = 0;
@@ -465,6 +473,12 @@ fn pawn_terms(
             let r = if white { rank } else { 7 - rank };
             mg += PASSED_MG[r];
             eg += PASSED_EG[r];
+            // Endgame: our king near the passer, theirs far. Own geometry,
+            // not a published table. Scaled by rank so a 6th-rank pawn
+            // cares more than a 3rd-rank one.
+            let kd_us = chebyshev(sq, our_king);
+            let kd_them = chebyshev(sq, their_king);
+            eg += (kd_them - kd_us) * r as i32;
         }
     }
     (mg, eg)
@@ -545,6 +559,25 @@ mod tests {
             "open {} blocked {}",
             evaluate(&open),
             evaluate(&blocked)
+        );
+    }
+
+    #[test]
+    fn king_near_passed_pawn_beats_king_far_from_it() {
+        // Same material, same king PST on c2 and f2 (mirror files, EG table
+        // is symmetric). White has a passed a-pawn: c2 is closer than f2.
+        let near = Position::from_fen("4k3/8/8/8/8/8/P1K5/8 w - - 0 1").unwrap();
+        let far = Position::from_fen("4k3/8/8/8/8/8/P4K2/8 w - - 0 1").unwrap();
+        assert_eq!(
+            PST_EG[crate::board::KING as usize][10],
+            PST_EG[crate::board::KING as usize][13],
+            "precondition: c2 and f2 have the same king EG PST"
+        );
+        assert!(
+            evaluate(&near) > evaluate(&far),
+            "near {} far {}",
+            evaluate(&near),
+            evaluate(&far)
         );
     }
 

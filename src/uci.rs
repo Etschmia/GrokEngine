@@ -323,6 +323,12 @@ fn parse_go(line: &str) -> SearchLimits {
                 }
                 i += 2;
             }
+            "nodes" => {
+                if let Some(v) = next.and_then(|s| s.parse::<u64>().ok()) {
+                    limits.nodes = Some(v.max(1));
+                }
+                i += 2;
+            }
             "infinite" => {
                 limits.infinite = true;
                 i += 1;
@@ -406,5 +412,32 @@ quit
         assert_eq!(engine.move_overhead_ms, 250);
         apply_setoption("setoption name MoveOverhead value 80", &mut engine);
         assert_eq!(engine.move_overhead_ms, 80);
+    }
+
+    #[test]
+    fn go_nodes_returns_legal_move() {
+        // Node count itself is checked in search::tests::node_limit_is_respected
+        // and in the binary test: info lines go to stdout, not this buffer.
+        let out = handle_script("position startpos\ngo nodes 20000\nquit\n");
+        let best = out
+            .lines()
+            .rev()
+            .find(|l| l.starts_with("bestmove "))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("");
+        let pos = Position::startpos();
+        let legal: Vec<String> = pos.legal_moves().iter().map(|m| m.to_lan()).collect();
+        assert!(
+            legal.contains(&best.to_string()),
+            "illegal or missing bestmove {best} in {out}"
+        );
+    }
+
+    #[test]
+    fn parse_go_nodes() {
+        let l = parse_go("go nodes 12345");
+        assert_eq!(l.nodes, Some(12345));
+        assert!(l.depth.is_none());
+        assert!(l.movetime_ms.is_none());
     }
 }

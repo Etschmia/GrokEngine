@@ -1,5 +1,9 @@
 //! Iterative-deepening alpha-beta with quiescence, a transposition table,
 //! and conservative selective search (null move, late-move reductions).
+//!
+//! Search heuristics below are inherited (typical formulas, never ablated in
+//! this engine until KANON.md). Production defaults stay on; an ablation
+//! flips one const to `false` and plays that binary against this one.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -13,6 +17,17 @@ const INF: i32 = 32_000;
 const MAX_PLY: usize = 64;
 const MATE_WINDOW: i32 = 512;
 
+/// Null-move pruning. Reduction R = 2 + (depth >= 6), min depth 3, skipped
+/// in check and in king-and-pawn endings. Inherited; see KANON.md.
+const USE_NULL_MOVE: bool = true;
+/// LMR: reduce quiet non-killers after 3 searches, extra ply after 8 at
+/// depth >= 5. Inherited formula.
+const USE_LMR: bool = true;
+/// Depth-1 futility: skip a quiet if static eval + 250 <= alpha. Inherited.
+const FUTILITY_MARGIN: i32 = 250;
+/// Quiescence delta: skip a capture if stand + victim + 200 < alpha. Inherited.
+const DELTA_MARGIN: i32 = 200;
+
 #[derive(Clone, Debug)]
 pub struct SearchLimits {
     pub depth: Option<i32>,
@@ -21,6 +36,7 @@ pub struct SearchLimits {
     pub btime_ms: Option<u64>,
     pub winc_ms: Option<u64>,
     pub binc_ms: Option<u64>,
+    pub nodes: Option<u64>,
     pub infinite: bool,
     pub move_overhead_ms: u64,
     pub silent: bool,
@@ -35,6 +51,7 @@ impl Default for SearchLimits {
             btime_ms: None,
             winc_ms: None,
             binc_ms: None,
+            nodes: None,
             infinite: false,
             move_overhead_ms: 100,
             silent: false,
@@ -63,6 +80,7 @@ struct Ctx<'a> {
     stop: &'a AtomicBool,
     start: Instant,
     budget: Duration,
+    node_limit: Option<u64>,
     nodes: u64,
     abort: bool,
     killers: [[Option<Move>; 2]; MAX_PLY],
@@ -80,10 +98,21 @@ impl Ctx<'_> {
         if self.stop.load(Ordering::Relaxed) {
             return true;
         }
+        if let Some(n) = self.node_limit {
+            if self.nodes >= n {
+                return true;
+            }
+        }
         self.start.elapsed() >= self.budget
     }
 
     fn check_abort(&mut self) {
+        if let Some(n) = self.node_limit {
+            if self.nodes >= n {
+                self.abort = true;
+                return;
+            }
+        }
         if self.nodes & 63 == 0 && self.timed_out() {
             self.abort = true;
         }
@@ -114,7 +143,7 @@ fn time_budget(pos: &Position, limits: &SearchLimits) -> Duration {
         )
     };
     if remain == 0 {
-        if limits.depth.is_some() {
+        if limits.depth.is_some() || limits.nodes.is_some() {
             return Duration::from_secs(60 * 60);
         }
         return Duration::from_millis(1000);
@@ -290,7 +319,7 @@ fn qsearch(pos: &mut Position, mut alpha: i32, beta: i32, ply: usize, ctx: &mut 
         } else {
             type_of(pos.piece_at(m.to))
         };
-        if m.promo == 0 && stand + piece_val(victim) + 200 < alpha {
+        if m.promo == 0 && stand + piece_val(victim) + DELTA_MARGIN < alpha {
             continue;
         }
         let u = pos.make(m);
@@ -367,7 +396,8 @@ fn alphabeta(
         depth += 1;
     }
 
-    if !in_check
+    if USE_NULL_MOVE
+        && !in_check
         && depth >= 3
         && ply > 0
         && pos.has_non_pawn_material(pos.side)
@@ -412,7 +442,7 @@ fn alphabeta(
 
         if !in_check && depth <= 1 && quiet && searched >= 1 {
             let eval = evaluate(pos);
-            if eval + 250 <= alpha {
+            if eval + FUTILITY_MARGIN <= alpha {
                 searched += 1;
                 continue;
             }
@@ -423,7 +453,8 @@ fn alphabeta(
 
         let mut new_depth = depth - 1;
         let mut reduced = false;
-        if quiet
+        if USE_LMR
+            && quiet
             && !in_check
             && depth >= 3
             && searched >= 3
@@ -560,6 +591,7 @@ pub fn search_best(
         stop,
         start: Instant::now(),
         budget,
+        node_limit: limits.nodes,
         nodes: 0,
         abort: false,
         killers: [[None; 2]; MAX_PLY],
@@ -730,6 +762,31 @@ mod tests {
             res.score > 200,
             "should keep the win, score {}",
             res.score
+        );
+    }
+
+    #[test]
+    fn node_limit_is_respected() {
+        let pos = Position::startpos();
+        let stop = AtomicBool::new(false);
+        let mut tt = TranspositionTable::with_mb(4);
+        let limits = SearchLimits {
+            nodes: Some(5_000),
+            silent: true,
+            ..SearchLimits::default()
+        };
+        let res = search_best(&pos, &[pos.hash], &limits, &mut tt, &stop);
+        assert!(res.nodes > 0, "searched no nodes");
+        assert!(
+            res.nodes <= 5_000 + 512,
+            "go nodes 5000 searched {}",
+            res.nodes
+        );
+        let legal: Vec<String> = pos.legal_moves().iter().map(|m| m.to_lan()).collect();
+        assert!(
+            legal.contains(&res.best.to_lan()),
+            "search move {} not legal",
+            res.best.to_lan()
         );
     }
 

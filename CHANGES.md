@@ -174,3 +174,110 @@ erreicht weiter Tiefe 10.
 Tests: `cargo test` grün, inklusive `rook_on_semi_open_file_beats_blocked_file`,
 `open_bishop_beats_blocked_bishop`, `pawn_shield_beats_exposed_wing_king`.
 Release-Build ohne Warnungen.
+
+# Kanon und Messung (20.09.2026)
+
+Antwort auf die Denkanstöße: `KANON.md`. Kurz: keine der 20-Partien-Serien
+ohne Buch hätte einen Nulleffekt von einem kleinen Gewinn getrennt. Die
+Suchparameter (Nullzug-R, LMR, Futility 250, Delta 200, Schachverlängerung,
+Zeiteinteilung Rest/30) sind geerbt und waren nie in dieser Engine allein
+gemessen. Die eigenen Material-/PST-Zahlen bleiben trotz 7–13 gegen die
+Simplified Evaluation — das ist die eine Entscheidung gegen das Wiki;
+getragen hat sie bisher nur die Term-Serie, und deren Bereich war zu weit.
+
+Eingefrorene Baseline bleibt `../engine-arena/grokengine-a65bad9`.
+
+## `go nodes`
+
+UCI-Standard. Ohne das Token hat die Engine bei `go nodes 20000` weiter nach
+ihrem Default gesucht (2,7 Mio. Knoten). Jetzt bricht sie bei der
+angegebenen Knotenzahl ab; `movetime`/`wtime` gelten zusätzlich, wer zuerst
+kommt. Tests: `node_limit_is_respected`, `parse_go_nodes`,
+`binary_go_nodes_stops_near_limit`. Bench bei Solltiefe 6 unverändert
+605167 Knoten — die Suche selbst hat sich dadurch nicht geändert.
+
+Binary: `../engine-arena/grokengine-nodes`.
+
+## Ablation Nullzug
+
+Baustein aus, nicht nur R verändert. `USE_NULL_MOVE = false`, sonst identisch
+mit `grokengine-nodes`. Binary `../engine-arena/grokengine-nonull`.
+
+```
+BOOK=openings.epd ./run_series.sh ./grokengine-nodes ./grokengine-nonull \
+    80 ablation-null-2026-09-20 -n 200000
+```
+
+Ergebnis (aus `auswertung.py`, Sicht `grokengine-nodes` = mit Nullzug):
+
+| | |
+|---|---|
+| Ergebnis | **36W 18R 26L** (45,0/80, 56,2 %) |
+| Elo | **+44** |
+| 95-%-Bereich | **−23 bis +114** (schließt 0 ein) |
+| LOS | 89,8 % |
+| Tiefe (Median der Partiemediane) | mit Nullzug 9, ohne 8 |
+| Enden | 70× normal/Matt, 9× Wiederholung, 1× 50-Züge-Regel |
+| Buch | 40 Stellungen, jede mit beiden Farben |
+
+Kein illegaler Zug, kein Absturz. Der Nullzug bleibt an, als Indiz: gleiche
+Knotenzahl, eine extra Suchtiefe, Schätzer über 50 %. Der Bereich enthält 0,
+also keine Übernahme im engen Sinn von `KANON.md`. PGNs:
+`../engine-arena/ablation-null-2026-09-20/`.
+
+## Nicht übernommen: Schachzüge von LMR/Futility ausnehmen
+
+Idee: ruhige Züge, die Schach geben, nicht reduzieren und nicht als
+futil schneiden. Binary `../engine-arena/grokengine-checks` gegen
+`grokengine-nodes`, gleiches Setup wie die Nullzug-Ablation.
+
+```
+BOOK=openings.epd ./run_series.sh ./grokengine-checks ./grokengine-nodes \
+    80 lmr-checks-2026-09-20 -n 200000
+```
+
+| | |
+|---|---|
+| Ergebnis | **32W 19R 29L** (41,5/80, 51,9 %) |
+| Elo | **+13** |
+| 95-%-Bereich | **−54 bis +81** (schließt 0 ein) |
+| LOS | 65,0 % |
+| Tiefe (Median) | checks 8, nodes 9 |
+
+Kein Beleg für einen Gewinn, eine Suchtiefe weniger bei gleicher
+Knotenzahl. Der Code ist zurückgenommen. PGNs:
+`../engine-arena/lmr-checks-2026-09-20/`.
+
+## Übernommen (Indiz): Könignähe zum Freibauern
+
+Idee: Im Endspiel soll ein Freibauer unseren König nah und den gegnerischen
+fern haben. Chebyshev-Abstand, mal Rang — eigene Geometrie, keine
+veröffentlichte Tabelle. Mittelspiel unverändert. Test
+`king_near_passed_pawn_beats_king_far_from_it` (c2 gegen f2, gleiche King-PST).
+
+Binary `../engine-arena/grokengine-passer` gegen `grokengine-nodes`
+(ohne diesen Term, mit Nullzug). Gleiches Setup wie die Nullzug-Ablation.
+
+```
+BOOK=openings.epd ./run_series.sh ./grokengine-passer ./grokengine-nodes \
+    80 passer-2026-09-20 -n 200000
+```
+
+| | |
+|---|---|
+| Ergebnis | **35W 19R 26L** (44,5/80, 55,6 %) |
+| Elo | **+39** |
+| 95-%-Bereich | **−27 bis +109** (schließt 0 ein) |
+| LOS | 87,5 % |
+| Tiefe (Median) | beide 9 |
+| Mit Weiß / Schwarz | 22 / 40 und 22,5 / 40 |
+| Enden | 65× normal/Matt, 13× Wiederholung, 2× 50-Züge-Regel |
+
+Kein Beleg im engen Sinn. Der Term bleibt, vorläufig: Schätzer über 50 %,
+keine Tiefenstrafe, beide Farben gleich. Bench Solltiefe 6: 596513 Knoten
+(vorher 605167 — andere Cutoffs, nicht mehr Arbeit), ~1,11e6 nps gegen
+~1,15e6 ohne den Term. PGNs: `../engine-arena/passer-2026-09-20/`.
+
+Eingefrorene Binaries dieses Durchgangs: `grokengine-a65bad9` (Auftrag),
+`grokengine-nodes` (a65bad9 plus `go nodes`), `grokengine-nonull`,
+`grokengine-checks` (verworfen), `grokengine-passer` (aktueller Stand).
