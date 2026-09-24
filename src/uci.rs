@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::board::Position;
-use crate::search::{search_best, SearchLimits};
+use crate::search::{SearchLimits, search_best};
+use crate::tb::{DEFAULT_PATH, Tablebase};
 use crate::tt::TranspositionTable;
 
 const NAME: &str = "Grokengine";
@@ -21,6 +22,7 @@ pub struct Engine {
     pub tt: Arc<Mutex<TranspositionTable>>,
     pub move_overhead_ms: u64,
     pub hash_mb: usize,
+    pub tb: Tablebase,
 }
 
 impl Engine {
@@ -33,6 +35,7 @@ impl Engine {
             tt: Arc::new(Mutex::new(TranspositionTable::with_mb(DEFAULT_HASH_MB))),
             move_overhead_ms: DEFAULT_OVERHEAD_MS,
             hash_mb: DEFAULT_HASH_MB,
+            tb: Tablebase::open(DEFAULT_PATH),
         }
     }
 
@@ -102,6 +105,10 @@ pub fn run() {
                     out,
                     "option name Move Overhead type spin default {DEFAULT_OVERHEAD_MS} min 0 max 5000"
                 );
+                let _ = writeln!(
+                    out,
+                    "option name SyzygyPath type string default {DEFAULT_PATH}"
+                );
                 let _ = writeln!(out, "uciok");
                 let _ = out.flush();
             }
@@ -130,6 +137,7 @@ pub fn run() {
                         &limits,
                         &mut tt,
                         &stdin_stop,
+                        &engine.tb,
                     )
                 };
                 let _ = writeln!(out, "bestmove {}", res.best.to_lan());
@@ -171,6 +179,10 @@ pub fn handle_line(
                 out,
                 "option name Move Overhead type spin default {DEFAULT_OVERHEAD_MS} min 0 max 5000"
             );
+            let _ = writeln!(
+                out,
+                "option name SyzygyPath type string default {DEFAULT_PATH}"
+            );
             let _ = writeln!(out, "uciok");
             let _ = out.flush();
         }
@@ -194,8 +206,15 @@ pub fn handle_line(
             searching.store(true, Ordering::Relaxed);
             let mv = {
                 let mut tt = engine.tt.lock().unwrap_or_else(|e| e.into_inner());
-                search_best(&engine.pos, &engine.history, &limits, &mut tt, stop)
-                    .best
+                search_best(
+                    &engine.pos,
+                    &engine.history,
+                    &limits,
+                    &mut tt,
+                    stop,
+                    &engine.tb,
+                )
+                .best
             };
             searching.store(false, Ordering::Relaxed);
             let _ = writeln!(out, "bestmove {}", mv.to_lan());
@@ -238,6 +257,16 @@ fn apply_setoption(line: &str, engine: &mut Engine) {
             if let Some(v) = value.and_then(|s| s.parse::<u64>().ok()) {
                 engine.move_overhead_ms = v.min(5000);
             }
+        }
+        "syzygypath" => {
+            let path = value_at
+                .map(|i| tokens[i + 1..].join(" "))
+                .unwrap_or_default();
+            engine.tb = if path.is_empty() {
+                Tablebase::empty()
+            } else {
+                Tablebase::open(path)
+            };
         }
         _ => {}
     }
@@ -367,6 +396,7 @@ mod tests {
         assert!(out.contains("readyok"), "{out}");
         assert!(out.contains("option name Hash"), "{out}");
         assert!(out.contains("option name Move Overhead"), "{out}");
+        assert!(out.contains("option name SyzygyPath"), "{out}");
     }
 
     #[test]
@@ -379,7 +409,10 @@ mod tests {
         let mv = best.split_whitespace().nth(1).unwrap_or("");
         let pos = Position::startpos();
         let legal: Vec<String> = pos.legal_moves().iter().map(|m| m.to_lan()).collect();
-        assert!(legal.contains(&mv.to_string()), "illegal bestmove {mv} in {out}");
+        assert!(
+            legal.contains(&mv.to_string()),
+            "illegal bestmove {mv} in {out}"
+        );
     }
 
     #[test]

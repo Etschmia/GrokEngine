@@ -3,7 +3,7 @@
 //! Keys are generated at compile time with SplitMix64 from a seed derived from
 //! the crate name, so they are not taken from another engine.
 
-use crate::board::{color_of, type_of, Color, Position};
+use crate::board::{Color, Position, color_of, type_of};
 
 const SEED: u64 = 0x6772_6F6B_656E_6769; // bytes of "grokengi"
 

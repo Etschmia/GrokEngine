@@ -8,9 +8,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::board::{type_of, Color, Move, Position, PAWN, QUEEN};
+use crate::board::{Color, EMPTY, Move, PAWN, Position, QUEEN, type_of};
 use crate::eval::{evaluate, piece_val};
-use crate::tt::{TranspositionTable, TT_ALPHA, TT_BETA, TT_EXACT};
+use crate::tb::{Tablebase, score_of_wdl};
+use crate::tt::{TT_ALPHA, TT_BETA, TT_EXACT, TranspositionTable};
 
 pub const MATE: i32 = 30_000;
 const INF: i32 = 32_000;
@@ -91,6 +92,7 @@ struct Ctx<'a> {
     rep: Vec<u64>,
     tt: &'a mut TranspositionTable,
     prev_best: Option<Move>,
+    tb: &'a Tablebase,
 }
 
 impl Ctx<'_> {
@@ -132,15 +134,9 @@ fn time_budget(pos: &Position, limits: &SearchLimits) -> Duration {
         return Duration::from_millis(mt.saturating_sub(overhead.max(20)).max(1));
     }
     let (remain, inc) = if pos.side == Color::White {
-        (
-            limits.wtime_ms.unwrap_or(0),
-            limits.winc_ms.unwrap_or(0),
-        )
+        (limits.wtime_ms.unwrap_or(0), limits.winc_ms.unwrap_or(0))
     } else {
-        (
-            limits.btime_ms.unwrap_or(0),
-            limits.binc_ms.unwrap_or(0),
-        )
+        (limits.btime_ms.unwrap_or(0), limits.binc_ms.unwrap_or(0))
     };
     if remain == 0 {
         if limits.depth.is_some() || limits.nodes.is_some() {
@@ -258,11 +254,34 @@ fn pv_string(ctx: &Ctx) -> String {
     s
 }
 
+fn tb_cutoff(pos: &mut Position, ply: usize, tb: &Tablebase) -> Option<i32> {
+    if tb.is_empty() || ply == 0 || pos.halfmove != 0 || pos.castling != 0 {
+        return None;
+    }
+    let n = pos.squares.iter().filter(|&&p| p != EMPTY).count();
+    if n > 5 || n < 2 {
+        return None;
+    }
+    // Immediate mate outranks a table loss, including on the search horizon.
+    if pos.in_check() {
+        let mut ms = Vec::new();
+        pos.gen_legal_into(&mut ms);
+        if ms.is_empty() {
+            return Some(-MATE + ply as i32);
+        }
+    }
+    let wdl = tb.probe_wdl(pos)?;
+    Some(score_of_wdl(wdl, ply as i32))
+}
+
 fn qsearch(pos: &mut Position, mut alpha: i32, beta: i32, ply: usize, ctx: &mut Ctx) -> i32 {
     ctx.nodes += 1;
     ctx.check_abort();
     if ctx.abort || ply >= MAX_PLY {
         return evaluate(pos);
+    }
+    if let Some(s) = tb_cutoff(pos, ply, ctx.tb) {
+        return s;
     }
 
     if pos.in_check() {
@@ -358,6 +377,9 @@ fn alphabeta(
     if is_repetition(pos, &ctx.rep, ply) {
         return 0;
     }
+    if let Some(s) = tb_cutoff(pos, ply, ctx.tb) {
+        return s;
+    }
 
     if depth <= 0 || ply >= MAX_PLY {
         return qsearch(pos, alpha, beta, ply, ctx);
@@ -396,12 +418,7 @@ fn alphabeta(
         depth += 1;
     }
 
-    if USE_NULL_MOVE
-        && !in_check
-        && depth >= 3
-        && ply > 0
-        && pos.has_non_pawn_material(pos.side)
-    {
+    if USE_NULL_MOVE && !in_check && depth >= 3 && ply > 0 && pos.has_non_pawn_material(pos.side) {
         let eval = evaluate(pos);
         if eval >= beta {
             let u = pos.make_null();
@@ -550,9 +567,9 @@ fn root_search(pos: &mut Position, depth: i32, ctx: &mut Ctx) -> (Move, i32) {
 }
 
 /// Look-ahead search. Returns a legal move for the side to move.
-pub fn best_move(pos: &Position, limits: &SearchLimits, stop: &AtomicBool) -> Move {
+pub fn best_move(pos: &Position, limits: &SearchLimits, stop: &AtomicBool, tb: &Tablebase) -> Move {
     let mut tt = TranspositionTable::with_mb(8);
-    search_best(pos, &[pos.hash], limits, &mut tt, stop).best
+    search_best(pos, &[pos.hash], limits, &mut tt, stop, tb).best
 }
 
 pub fn search_best(
@@ -561,6 +578,7 @@ pub fn search_best(
     limits: &SearchLimits,
     tt: &mut TranspositionTable,
     stop: &AtomicBool,
+    tb: &Tablebase,
 ) -> SearchResult {
     let mut pos = pos.clone();
     let mut root_moves = Vec::with_capacity(64);
@@ -572,6 +590,38 @@ pub fn search_best(
             nodes: 0,
             depth: 0,
             pv: Vec::new(),
+        };
+    }
+
+    if let Some(pick) = tb.root_pick(&mut pos, history) {
+        let mut score = score_of_wdl(pick.wdl, 0);
+        let u = pos.make(pick.mv);
+        let mates = pos.in_check() && {
+            let mut ms = Vec::new();
+            pos.gen_legal_into(&mut ms);
+            ms.is_empty()
+        };
+        pos.unmake(pick.mv, u);
+        if mates {
+            score = MATE - 1;
+        }
+        if !limits.silent {
+            let sc = if score.abs() > MATE - 128 {
+                format!("mate {}", mate_plies(score))
+            } else {
+                format!("cp {score}")
+            };
+            println!(
+                "info depth 1 score {sc} nodes 1 nps 1 time 1 pv {}",
+                pick.mv.to_lan()
+            );
+        }
+        return SearchResult {
+            best: pick.mv,
+            score,
+            nodes: 1,
+            depth: 1,
+            pv: vec![pick.mv],
         };
     }
 
@@ -602,6 +652,7 @@ pub fn search_best(
         rep,
         tt,
         prev_best: None,
+        tb,
     };
 
     let mut best = root_moves[0];
@@ -678,7 +729,8 @@ mod tests {
             silent: true,
             ..SearchLimits::default()
         };
-        search_best(pos, history, &limits, &mut tt, &stop)
+        let tb = Tablebase::open(crate::tb::DEFAULT_PATH);
+        search_best(pos, history, &limits, &mut tt, &stop, &tb)
     }
 
     fn apply_moves(fen: &str, moves: &[&str]) -> (Position, Vec<u64>) {
@@ -758,11 +810,7 @@ mod tests {
             res.best.to_lan(),
             res.score
         );
-        assert!(
-            res.score > 200,
-            "should keep the win, score {}",
-            res.score
-        );
+        assert!(res.score > 200, "should keep the win, score {}", res.score);
     }
 
     #[test]
@@ -775,7 +823,8 @@ mod tests {
             silent: true,
             ..SearchLimits::default()
         };
-        let res = search_best(&pos, &[pos.hash], &limits, &mut tt, &stop);
+        let tb = Tablebase::open(crate::tb::DEFAULT_PATH);
+        let res = search_best(&pos, &[pos.hash], &limits, &mut tt, &stop, &tb);
         assert!(res.nodes > 0, "searched no nodes");
         assert!(
             res.nodes <= 5_000 + 512,
@@ -787,6 +836,28 @@ mod tests {
             legal.contains(&res.best.to_lan()),
             "search move {} not legal",
             res.best.to_lan()
+        );
+    }
+
+    #[test]
+    fn tablebase_plays_the_ending() {
+        let pos = Position::from_fen("8/8/8/4k3/8/8/4Q3/4K3 w - - 0 1").unwrap();
+        let res = search_depth(&pos, &[pos.hash], 2);
+        assert!(
+            res.score >= crate::tb::TB_SCORE - 2,
+            "KQ vs K should be a table win, score {} move {}",
+            res.score,
+            res.best
+        );
+        let drawn = Position::from_fen("8/8/8/4k3/8/8/4K3/4R3 w - - 99 1").unwrap();
+        let res = search_depth(&drawn, &[drawn.hash], 2);
+        assert_eq!(res.score, 0, "KRK on the 50-move boundary is a draw");
+        let mate = Position::from_fen("k7/8/1K6/8/8/8/8/7R w - - 99 1").unwrap();
+        let res = search_depth(&mate, &[mate.hash], 2);
+        assert!(
+            res.score >= MATE - 2,
+            "mate on the 100th half-move, score {}",
+            res.score
         );
     }
 

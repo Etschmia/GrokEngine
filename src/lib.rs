@@ -8,9 +8,10 @@ pub mod bench;
 pub mod board;
 pub mod eval;
 pub mod search;
+pub mod tb;
 pub mod tt;
 pub mod uci;
 pub mod zobrist;
 
 pub use board::{Move, Position};
-pub use search::{best_move, SearchLimits};
+pub use search::{SearchLimits, best_move};

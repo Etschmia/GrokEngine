@@ -9,9 +9,15 @@ Was die Engine kann: legale Züge (Perft), iterative Alpha-Beta-Suche mit
 Ruhesuche, Transpositionstabelle, Wiedererkennung von Stellungen, eigene
 tapered Bewertung (Material, PST, Bauernstruktur, Könignähe zum Freibauern
 im Endspiel, Mobilität, Königssicherheit, Türme auf offenen Linien), UCI
-inklusive `Hash`, `Move Overhead` und `go nodes`.
+inklusive `Hash`, `Move Overhead`, `SyzygyPath` und `go nodes`.
 
-Was sie nicht kann: Mehrkern-Suche, Eröffnungsbuch, Syzygy, Ponder.
+Syzygy: die Tabellen unter `SyzygyPath` (Default
+`/home/librechat/syzygy/3-4-5`, drei bis fünf Steine). In der Suche zählt
+WDL, sobald die Halbzuguhr auf 0 steht. An der Wurzel wählt DTZ den Zug,
+der einen Gewinn verkürzt und einen Verlust hinauszögert. Ein leerer Pfad
+schaltet die Tabellen ab.
+
+Was sie nicht kann: Mehrkern-Suche, Eröffnungsbuch, Ponder.
 
 ## Build
 
@@ -26,6 +32,7 @@ cargo build --release
 - `isready` → `readyok` (auch während der Suche)
 - `setoption name Hash value <MB>` (Default 32)
 - `setoption name Move Overhead value <ms>` (Default 100; Alias `MoveOverhead`)
+- `setoption name SyzygyPath value <verzeichnis>` (Default `/home/librechat/syzygy/3-4-5`; leer = aus)
 - `ucinewgame`
 - `position startpos moves …` / `position fen <fen> moves …`
 - `go movetime <ms>` / `go wtime … btime … winc … binc …` / `go depth …` / `go nodes …`

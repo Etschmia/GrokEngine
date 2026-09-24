@@ -156,11 +156,7 @@ pub fn type_of(piece: u8) -> u8 {
 
 #[inline]
 fn make_piece(color: Color, pt: u8) -> u8 {
-    if color == Color::White {
-        pt
-    } else {
-        pt | 8
-    }
+    if color == Color::White { pt } else { pt | 8 }
 }
 
 pub(crate) const KNIGHT_D: [(i8, i8); 8] = [
@@ -892,7 +888,15 @@ impl Position {
         }
     }
 
-    fn try_castle(&self, king: u8, to: u8, through: &[u8], rook_sq: u8, rook: u8, moves: &mut Vec<Move>) {
+    fn try_castle(
+        &self,
+        king: u8,
+        to: u8,
+        through: &[u8],
+        rook_sq: u8,
+        rook: u8,
+        moves: &mut Vec<Move>,
+    ) {
         if self.squares[rook_sq as usize] != rook {
             return;
         }
@@ -1032,8 +1036,7 @@ mod tests {
 
     #[test]
     fn perft_position3_ep_pins() {
-        let mut pos =
-            Position::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1").unwrap();
+        let mut pos = Position::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1").unwrap();
         assert_eq!(pos.perft(1), 14);
         assert_eq!(pos.perft(2), 191);
         assert_eq!(pos.perft(3), 2812);
@@ -1042,10 +1045,9 @@ mod tests {
 
     #[test]
     fn perft_talkchess_promotion() {
-        let mut pos = Position::from_fen(
-            "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
-        )
-        .unwrap();
+        let mut pos =
+            Position::from_fen("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8")
+                .unwrap();
         assert_eq!(pos.perft(1), 44);
         assert_eq!(pos.perft(2), 1486);
         assert_eq!(pos.perft(3), 62379);

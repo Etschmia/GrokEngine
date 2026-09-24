@@ -4,7 +4,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use crate::board::Position;
-use crate::search::{search_best, SearchLimits};
+use crate::search::{SearchLimits, search_best};
+use crate::tb::Tablebase;
 use crate::tt::TranspositionTable;
 
 pub const DEPTH: i32 = 6;
@@ -28,13 +29,14 @@ pub fn run() {
         silent: false,
         ..SearchLimits::default()
     };
+    let tb = Tablebase::open(crate::tb::DEFAULT_PATH);
     let t0 = Instant::now();
     let mut nodes = 0u64;
     let mut depth_sum = 0i32;
     for (i, fen) in FENS.iter().enumerate() {
         let pos = Position::from_fen(fen).expect("bench fen");
         tt.clear();
-        let res = search_best(&pos, &[pos.hash], &limits, &mut tt, &stop);
+        let res = search_best(&pos, &[pos.hash], &limits, &mut tt, &stop, &tb);
         nodes += res.nodes;
         depth_sum += res.depth;
         println!(
